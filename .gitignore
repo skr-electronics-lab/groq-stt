@@ -1,0 +1,43 @@
+# build artifacts
+.pio/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# editor
+*.bak
+*.tmp
+*~
+
+# platformio scratch
+.piolibdeps/
+
+# python / venv
+__pycache__/
+*.pyc
+.venv/
+
+# secrets (in case anyone drops a creds file during dev)
+secrets.h
+secrets.txt
+.env
+
+# dev-only (not published): test harness, CI compile gates, notes, agent files
+test/
+ci/
+PROJECT_BRIEF.md
+.claude/
+
+# large generated files
+*.elf
+*.bin
+*.map
+*.checksum
+.dblite
+.sconsign*.dblite
