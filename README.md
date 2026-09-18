@@ -146,9 +146,8 @@ stt.setPrompt("This is a technical demo.");     // spelling/terminology hint
 ```cpp
 stt.setGain(8);                                 // 1..16 (default 8)
 stt.setHighpassHz(120);                         // rumble filter
-stt.useSoftClip(true);                          // tame loud transients
 stt.setSilenceThreshold(300);                   // raw peak below this = silence
-stt.setSilenceAction(STT_SILENCE_REJECT);       // REJECT or KEEP
+stt.setSilenceAction(STT_SILENCE_REJECT);       // STT_SILENCE_REJECT | STT_SILENCE_WARN | STT_SILENCE_IGNORE
 stt.setMinSeconds(0.3f);
 stt.setMaxSeconds(0);                           // 0 = no cap
 stt.setPins(sck, ws, sd);
@@ -293,7 +292,7 @@ For a voice assistant pipeline:
 | `STT_ERR_I2S_INIT` | mic init failed | check pins / wiring; S3 may need `useLegacyI2S(true)` with PSRAM |
 | `STT_ERR_FILE` | file open/read failed | check path / fs::FS |
 | `STT_ERR_TOO_SHORT` | recording too short | held the button for < 0.3 s; ignore or `setMinSeconds(0)` |
-| `STT_ERR_TOO_SILENT` | peak below silence threshold | turn on the room sound, or `setSilenceAction(STT_SILENCE_KEEP)` |
+| `STT_ERR_SILENCE` | peak below silence threshold | turn on the room sound, or `setSilenceAction(STT_SILENCE_IGNORE)` |
 
 ---
 

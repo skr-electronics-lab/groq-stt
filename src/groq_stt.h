@@ -94,7 +94,7 @@ public:
   void useLegacyI2S(bool legacy) { _forceLegacy = legacy; }
   void setCACert(const char* cert);
   void setPins(int sck, int ws, int sd) { _sck = sck; _ws = ws; _sd = sd; }
-  void setButtonPin(int pin) { _btnPin = pin; }
+  void setButtonPin(int pin) { _btnPin = pin; if (_btnPin >= 0) pinMode(_btnPin, INPUT_PULLUP); }
   bool isWifiConnected();
   groq_stt_err_t lastError() const { return _lastError; }
   const char* errorText() const { return groq_stt_errorText(_lastError); }
@@ -175,6 +175,7 @@ private:
   float _connectMs;                  // last TLS handshake time
   bool _micRunning;
   bool _fixedDuration;
+  bool _btnHeldAtStart;
   uint32_t _fixedMs;
   uint32_t _recStartMs, _lastSampleMs;
   uint32_t _totalSamples;

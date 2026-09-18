@@ -63,6 +63,7 @@ GroqSTT::GroqSTT()
   _totalSamples = 0;
   _clipPeak = 0;
   _rmsAcc = 0;
+  _btnHeldAtStart = false;
   _hpY1 = _hpX1 = _hpY2 = _hpX2 = 0;
   _hpCoef = 0;
   _onDone = nullptr;
@@ -74,11 +75,15 @@ GroqSTT::GroqSTT()
   _rxNoBody = false;
   _rxRemain = 0;
   _rxDeadline = 0;
+  if (_btnPin >= 0) pinMode(_btnPin, INPUT_PULLUP);
   computeHpCoef();
 }
 
 GroqSTT::GroqSTT(int sck, int ws, int sd) : GroqSTT() { _sck = sck; _ws = ws; _sd = sd; }
-GroqSTT::GroqSTT(int sck, int ws, int sd, int btnPin) : GroqSTT() { _sck = sck; _ws = ws; _sd = sd; _btnPin = btnPin; }
+GroqSTT::GroqSTT(int sck, int ws, int sd, int btnPin) : GroqSTT() {
+  _sck = sck; _ws = ws; _sd = sd; _btnPin = btnPin;
+  if (_btnPin >= 0) pinMode(_btnPin, INPUT_PULLUP);
+}
 
 void GroqSTT::setHighpassHz(uint16_t hz) { _hpHz = hz; computeHpCoef(); }
 void GroqSTT::computeHpCoef() {
@@ -149,6 +154,7 @@ bool GroqSTT::begin(const char* apiKey) {
     log(1, "begin: %s", _errorDetail.c_str());
     return false;
   }
+  if (_btnPin >= 0) pinMode(_btnPin, INPUT_PULLUP);
   log(2, "ready - model %s, language '%s', format %s",
       _model.c_str(), _language.length() ? _language.c_str() : "auto",
       _format == STT_FMT_TEXT ? "text" : (_format == STT_FMT_JSON ? "json" : "verbose_json"));
@@ -203,6 +209,7 @@ bool GroqSTT::startRecording() {
   _vadNoise = 0;
   _vadSpeech = false;
   _vadQuietMs = 0;
+  _btnHeldAtStart = (_btnPin >= 0 && digitalRead(_btnPin) == LOW);
 
   if (!checkPrereqs()) return false;
 
@@ -304,7 +311,7 @@ bool GroqSTT::stepRecording() {
   bool stopNow = false;
   if (_fixedDuration) {
     stopNow = elapsedMs >= _fixedMs;
-  } else if (_btnPin >= 0) {
+  } else if (_btnPin >= 0 && _btnHeldAtStart) {
     stopNow = digitalRead(_btnPin) == HIGH;               // button released (active-LOW)
   } else if (_vad) {
     if (_vadSpeech) {
@@ -317,7 +324,7 @@ bool GroqSTT::stepRecording() {
   if (!stopNow) {
     float limit = -1.0f;
     if (_maxSeconds > 0) limit = _maxSeconds;                    // explicit ceiling
-    else if (_btnPin < 0 && !_fixedDuration && !_vad) limit = GROQ_STT_MAX_SECONDS; // implicit
+    else if ((!_btnHeldAtStart || _btnPin < 0) && !_fixedDuration && !_vad) limit = GROQ_STT_MAX_SECONDS; // implicit
     if (limit > 0 && elapsedMs >= (uint32_t)(limit * 1000.0f)) {
       log(2, "max duration reached");
       stopNow = true;

@@ -171,17 +171,21 @@ bool GroqSTT::httpStartRequest(uint32_t wavDataLen) {
     body += "Content-Disposition: form-data; name=\"temperature\"\r\n\r\n";
     body += String(_temperature, 3); body += "\r\n";
   }
-  // file part: header + WAV header (audio follows in later chunks)
+  // file part: header (audio follows in later chunks)
   body += s_boundary; body += "\r\n";
   body += "Content-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\n";
   body += "Content-Type: audio/wav\r\n\r\n";
+  if (!writeChunk(_client, (const uint8_t*)body.c_str(), body.length(), GROQ_STT_CONNECT_TIMEOUT))
+    return false;
+
   if (wavDataLen != 0) {                 // 0 = the file stream already carries its own bytes
     uint8_t wav[44];
     wavHeader(wav, GROQ_STT_SAMPLE_RATE, wavDataLen);
-    body += String((const char*)wav, 44);
+    if (!writeChunk(_client, wav, 44, GROQ_STT_CONNECT_TIMEOUT))
+      return false;
   }
 
-  return writeChunk(_client, (const uint8_t*)body.c_str(), body.length(), GROQ_STT_CONNECT_TIMEOUT);
+  return true;
 }
 
 bool GroqSTT::httpSendAudioChunk(const uint8_t* data, size_t len) {
@@ -315,9 +319,20 @@ int GroqSTT::httpReadPoll() {
       // ---- CRLF after chunk ----
       case GROQ_STT_RX_CHUNK_CRLF: {
         int r = readByte(_client, b, _rxDeadline);
-        if (r == 1 && b == '\r') {
-          r = readByte(_client, b, _rxDeadline);
-          if (r == 1 && b == '\n') { _rxState = GROQ_STT_RX_CHUNK_SIZE; continue; }
+        if (r == 1) {
+          if (b == '\r') { _rxState = GROQ_STT_RX_CHUNK_LF; goto next; }
+          if (b == '\n') { _rxState = GROQ_STT_RX_CHUNK_SIZE; goto next; }
+        }
+        if (r == 0) return 0;
+        httpAbort();
+        return -1;
+      }
+
+      // ---- LF after CR in chunk CRLF ----
+      case GROQ_STT_RX_CHUNK_LF: {
+        int r = readByte(_client, b, _rxDeadline);
+        if (r == 1) {
+          if (b == '\n') { _rxState = GROQ_STT_RX_CHUNK_SIZE; goto next; }
         }
         if (r == 0) return 0;
         httpAbort();
