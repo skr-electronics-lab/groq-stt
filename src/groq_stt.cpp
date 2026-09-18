@@ -522,6 +522,7 @@ String GroqSTT::transcribeBuffer(const int16_t* pcm, size_t samples) {
     finishError(STT_ERR_TLS_CONNECT, "failed to send request head");
     return "";
   }
+  _latencyStart = millis();
   uint8_t* buf = micChunkBuf();
   size_t i = 0;
   while (i < samples) {
@@ -539,7 +540,6 @@ String GroqSTT::transcribeBuffer(const int16_t* pcm, size_t samples) {
     return "";
   }
   _sendMs = (float)(millis() - _latencyStart);
-  _latencyStart = millis();
   return settleReply();
 }
 
@@ -579,6 +579,7 @@ String GroqSTT::transcribeFile(fs::FS& fs, const char* path) {
     finishError(STT_ERR_TLS_CONNECT, "failed to send request head");
     return "";
   }
+  _latencyStart = millis();
   uint8_t* buf = micChunkBuf();
   while (f.available()) {
     size_t n = f.read(buf, GROQ_STT_CHUNK_SAMPLES * 2);
@@ -595,6 +596,5 @@ String GroqSTT::transcribeFile(fs::FS& fs, const char* path) {
     return "";
   }
   _sendMs = (float)(millis() - _latencyStart);
-  _latencyStart = millis();
   return settleReply();
 }
