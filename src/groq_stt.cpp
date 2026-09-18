@@ -64,6 +64,7 @@ GroqSTT::GroqSTT()
   _clipPeak = 0;
   _rmsAcc = 0;
   _btnHeldAtStart = false;
+  _btnReleaseMs = 0;
   _hpY1 = _hpX1 = _hpY2 = _hpX2 = 0;
   _hpCoef = 0;
   _onDone = nullptr;
@@ -210,6 +211,7 @@ bool GroqSTT::startRecording() {
   _vadSpeech = false;
   _vadQuietMs = 0;
   _btnHeldAtStart = (_btnPin >= 0 && digitalRead(_btnPin) == LOW);
+  _btnReleaseMs = 0;
 
   if (!checkPrereqs()) return false;
 
@@ -312,7 +314,15 @@ bool GroqSTT::stepRecording() {
   if (_fixedDuration) {
     stopNow = elapsedMs >= _fixedMs;
   } else if (_btnPin >= 0 && _btnHeldAtStart) {
-    stopNow = digitalRead(_btnPin) == HIGH;               // button released (active-LOW)
+    if (digitalRead(_btnPin) == HIGH) {
+      if (_btnReleaseMs == 0) {
+        _btnReleaseMs = millis();
+      } else if (millis() - _btnReleaseMs >= 200) {
+        stopNow = true; // button held high continuously for >= 200ms
+      }
+    } else {
+      _btnReleaseMs = 0; // still pressed down!
+    }
   } else if (_vad) {
     if (_vadSpeech) {
       stopNow = _vadQuietMs >= _vadTailMs;

@@ -176,6 +176,7 @@ private:
   bool _micRunning;
   bool _fixedDuration;
   bool _btnHeldAtStart;
+  uint32_t _btnReleaseMs;
   uint32_t _fixedMs;
   uint32_t _recStartMs, _lastSampleMs;
   uint32_t _totalSamples;
