@@ -1,6 +1,6 @@
 #pragma once
 #include <Arduino.h>
-#include <fs.h>
+#include <FS.h>
 #include <WiFiClientSecure.h>
 #include "groq_stt_config.h"
 
