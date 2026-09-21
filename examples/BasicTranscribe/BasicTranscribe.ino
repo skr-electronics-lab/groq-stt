@@ -1,133 +1,170 @@
 /*
-  BasicTranscribe - the happy path (~5 lines of user code, zero configuration)
+  BasicTranscribe - The complete, flexible starter sketch for GroqSTT
 
-  Hold BOOT (GPIO0) and talk; release to transcribe. Text prints to Serial.
+  Universal Speech-to-Text for ESP32 & ESP32-S3:
+    - Hold a button and talk (Push-to-Talk)
+    - OR run hands-free with VAD (Voice Activity Detection, no buttons needed!)
+    - Streams audio directly from I2S mic (INMP441/SPH0645) to Groq Whisper over TLS
+    - Zero SD card, zero PSRAM, and zero audio buffer RAM required
 
-  What the library does for you out of the box (no configuration needed):
-    - model       whisper-large-v3-turbo  (Groq's speech-to-text)
-    - sample rate 16 kHz mono              (what Groq expects)
-    - gain x8 + 120 Hz rumble high-pass    (clean mic signal)
-    - recording   ends when you release the button  (no time cap)
+  Hardware Wiring (INMP441 I2S Microphone):
+    - VDD -> 3.3V (NOT 5V! 3.3V only)
+    - GND -> GND
+    - L/R -> GND (selects Left channel)
+    - SD  -> Data In  (Default: GPIO 22 on classic ESP32, GPIO 4 on ESP32-S3)
+    - SCK -> BCLK     (Default: GPIO 26 on classic ESP32, GPIO 5 on ESP32-S3)
+    - WS  -> LRCLK    (Default: GPIO 25 on classic ESP32, GPIO 6 on ESP32-S3)
 
-  Want it hands-free? Wire no button, then call:
-      stt.setButtonPin(-1);    // tell the library: "there is no button"
-      stt.useVad(true);        // auto-stop ~1.2 s after you stop talking
-  See src/groq_stt_config.h for every tunable (gain, model, language, etc).
+  Push-to-Talk Button:
+    - Onboard BOOT button is on GPIO 0 (active LOW, internal pull-up enabled).
+    - Or wire any momentary tactile button between ANY GPIO and GND.
+    - Or set PIN_BUTTON = -1 and enable VAD for hands-free operation!
 
-  Hardware wiring:
-    Classic ESP32 (verified rig, arduino-esp32 core 3.x)  - I2S mic on
-        SCK=26, WS=25, SD=22
-    ESP32-S3                                             - I2S mic on
-        SCK=5,  WS=6,  SD=4
-    INMP441 connections: VDD -> 3V3 (NOT 5V), GND -> GND,
-                         L/R -> GND (left channel), SCK/WS/SD as above.
-
-  Get a free API key at: https://console.groq.com/keys
+  Get a free Groq API key at: https://console.groq.com/keys
 */
 
-#include <Arduino.h>      // Serial, delay(), millis(), digitalRead(), String, etc.
-#include <WiFi.h>         // ESP32 Wi-Fi stack (we drive the connection ourselves)
-#include <groq_stt.h>     // the GroqSTT library (one include gives you everything)
+#include <Arduino.h>
+#include <WiFi.h>
+#include <groq_stt.h>
 
-// --- 1. Wi-Fi + API credentials ---------------------------------------------
-// Edit these three lines with your own values, then flash.
+// =============================================================================
+// 1. Wi-Fi & Groq API Credentials
+// =============================================================================
 const char* WIFI_SSID    = "YOUR_WIFI";      // your Wi-Fi network name
 const char* WIFI_PASS    = "YOUR_PASSWORD";  // your Wi-Fi password
 const char* GROQ_API_KEY = "gsk_...";        // your Groq API key (starts with gsk_)
 
-// --- 2. Create the STT object ------------------------------------------------
-// The default constructor picks the right I2S pins for the chip you're on and
-// uses GPIO 0 (the BOOT button) as the push-to-talk button.
-GroqSTT stt;
+// =============================================================================
+// 2. Hardware Pin Configuration (Change to match YOUR custom board/wiring)
+// =============================================================================
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+const int PIN_MIC_SCK = 5;
+const int PIN_MIC_WS  = 6;
+const int PIN_MIC_SD  = 4;
+#else
+const int PIN_MIC_SCK = 26;
+const int PIN_MIC_WS  = 25;
+const int PIN_MIC_SD  = 22;
+#endif
 
-// --- 3. Tiny helper: connect to Wi-Fi and report the assigned IP ------------
-// We connect Wi-Fi ourselves so the library only has to worry about the mic
-// and the upload - that's the "non-interfering" promise. You could skip this
-// and call stt.begin(SSID, PASS, KEY) instead and the library would do it.
+// Button pin for Push-to-Talk:
+// Set to 0 to use onboard BOOT button, or any GPIO connected to a button to GND.
+// Set to -1 if your project has NO button (and use hands-free VAD below).
+const int PIN_BUTTON  = 0;
+
+// Initialize GroqSTT with our explicit pins (never hardcoded to any single board)
+GroqSTT stt(PIN_MIC_SCK, PIN_MIC_WS, PIN_MIC_SD, PIN_BUTTON);
+
+// --- Wi-Fi Connection Helper -------------------------------------------------
 static void connectWiFi() {
-  // Tell the user which network we're trying, so it's obvious in the Serial log.
-  Serial.print("[NET] connecting to ");
+  Serial.print("[NET] Connecting to ");
   Serial.println(WIFI_SSID);
 
-  // Station mode = "join an existing Wi-Fi network" (vs. creating our own AP).
   WiFi.mode(WIFI_STA);
-  // Start the connection in the background; we poll WiFi.status() below.
   WiFi.begin(WIFI_SSID, WIFI_PASS);
 
-  // Block (with small sleeps) until the link is up. We print a dot every
-  // 400 ms so the user can see progress in the Serial Monitor.
   while (WiFi.status() != WL_CONNECTED) {
     delay(400);
     Serial.print(".");
   }
 
-  // Link is up - print the assigned IP so the user can reach the device
-  // (web UI, MQTT, OTA, etc.) if they want to.
   Serial.println();
-  Serial.print("[NET] connected, IP: ");
+  Serial.print("[NET] Connected! IP: ");
   Serial.println(WiFi.localIP());
 }
 
 void setup() {
-  // Open the Serial port at 115200 baud (matches the ESP32 bootloader default
-  // and most example sketches). delay(500) gives the USB-Serial chip a moment
-  // to enumerate on the host so the very first prints don't get lost.
   Serial.begin(115200);
   delay(500);
 
-  // Friendly banner so the user knows which example is running and which
-  // Groq model will do the transcribing.
-  Serial.println("GroqSTT - BasicTranscribe");
-  Serial.print("Model: ");
-  Serial.println(GROQ_STT_MODEL);
+  Serial.println("\n=============================================");
+  Serial.println("         GroqSTT - BasicTranscribe           ");
+  Serial.println("=============================================");
 
-  // Get on Wi-Fi first; the library needs a working network to reach Groq.
   connectWiFi();
 
-  // stt.begin(apiKey) initializes the library. It does NOT touch Wi-Fi - it
-  // only checks that Wi-Fi is up, validates the API key, and prepares the
-  // I2S microphone driver. If something went wrong it returns false and we
-  // print the human-readable error and stop.
+  // ===========================================================================
+  // 3. Complete Library Configuration & Tuning (All settings exposed!)
+  // ===========================================================================
+
+  // --- A. Model Selection ---
+  // Groq offers 3 official Whisper models:
+  //   1. "whisper-large-v3-turbo" (Default & Recommended):
+  //      - Ultra-fast sub-second latency (~200 - 400 ms inference)
+  //      - Multilingual support for 99 languages
+  //      - Best balance of speed, accuracy, and lowest cost ($0.04/hr)
+  //   2. "whisper-large-v3":
+  //      - Full Large v3 model (~700 - 1200 ms inference)
+  //      - Top accuracy for heavy accents, technical vocabulary, or noisy audio
+  //   3. "distil-whisper-large-v3-en":
+  //      - Distilled, lightweight model for English-only applications ($0.02/hr)
+  stt.setModel("whisper-large-v3-turbo");
+
+  // --- B. Language ---
+  // Set explicit ISO-639-1 code (e.g., "en", "es", "fr", "de", "hi", "zh", "ja").
+  // Set to "" (empty string) to enable Whisper's automatic language detection!
+  stt.setLanguage("en");
+
+  // --- C. Audio & DSP Tuning ---
+  // Digital Gain: Multiplier applied after filtering (default: 8, range: 1 to 16).
+  //   - Increase (e.g. 10-12) if speaking from a distance or mic is quiet.
+  //   - Decrease (e.g. 4-6) if speaking very close or in loud environments.
+  stt.setGain(8);
+
+  // High-Pass Filter: Corner frequency in Hz (default: 120 Hz).
+  //   - Strips sub-audible DC offset and mechanical desk rumble from INMP441,
+  //     freeing up 26x of digital headroom for crystal-clear vocal capture.
+  stt.setHighpassHz(120);
+
+  // Silence Threshold: Minimum audio peak (0 - 32767) required to upload (default: 300).
+  //   - Prevents Whisper from hallucinating phantom words when no one is speaking.
+  stt.setSilenceThreshold(300);
+
+  // --- D. Context Prompt (Optional) ---
+  // Pass keywords or specialized acronyms to help Whisper spell them properly:
+  // stt.setPrompt("ESP32, GroqSTT, Arduino, IoT, Neopixel");
+
+  // --- E. Hands-free VAD (Voice Activity Detection) ---
+  // Want hands-free recording with NO buttons?
+  // Uncomment the two lines below:
+  // stt.setButtonPin(-1); // disable button
+  // stt.useVad(true);     // auto-stop recording ~1.2s after you stop speaking
+
+  // Initialize GroqSTT with API key
   if (!stt.begin(GROQ_API_KEY)) {
-    Serial.print("[INIT] failed: ");
+    Serial.print("[INIT FAIL] ");
     Serial.println(stt.errorText());
-    while (true) delay(1000);   // halt here - nothing useful to do without net
+    while (true) delay(1000);
   }
 
-  // Ready. Tell the user what to do.
-  Serial.println("[INIT] ready - hold BOOT to talk");
+  Serial.println("[INIT OK] Ready!");
+  if (PIN_BUTTON >= 0) {
+    Serial.println(">> Press & HOLD button to talk, RELEASE to transcribe <<\n");
+  } else {
+    Serial.println(">> Speak freely into the microphone (Hands-free VAD enabled) <<\n");
+  }
 }
 
 void loop() {
-  // listen() is self-contained: it waits for you to PRESS BOOT, records
-  // while you hold it, streams the audio to Groq, and returns the transcript.
-  // Do NOT read the button yourself before calling it - that would eat the
-  // press and listen() would then wait for a second one.
-  Serial.println("[REC] hold BOOT to talk");
+  // listen() handles everything:
+  //   - Pre-warms the TLS socket in the background while waiting
+  //   - Detects the button press (or starts immediately if buttonless/VAD)
+  //   - Filters and streams audio chunks in real-time
+  //   - Applies 200ms button release debounce
+  //   - Returns the transcribed text string
   String text = stt.listen();
 
-  // stt.listen() returns:
-  //   - a non-empty String  -> success, here's the transcript
-  //   - an empty String     -> something went wrong, see stt.lastError()
-  if (text.length()) {
-    // Success path. lastLatencyMs() is "request head sent -> reply received",
-    // i.e. the real upload + Groq processing time. It does NOT include how
-    // long you held BOOT, so it's the number that actually matters.
-    Serial.print("Transcript: ");
-    Serial.println(text);
-    Serial.print("Time: ");
-    Serial.print((unsigned)stt.lastLatencyMs());
-    Serial.print(" ms  (send ");
-    Serial.print((unsigned)stt.lastSendMs());
-    Serial.print(" + infer ");
-    Serial.print((unsigned)stt.lastInferMs());
-    Serial.println(")");
-  } else {
-    // Error path. Print the human-readable reason and the HTTP status Groq
-    // returned (0 if the request never made it out, e.g. Wi-Fi dropped).
-    Serial.print("Error: ");
-    Serial.println(stt.errorText());
-    Serial.print("HTTP status: ");
-    Serial.println(stt.lastHttpStatus());
+  if (text.length() > 0) {
+    Serial.println("---------------------------------------------");
+    Serial.print("Transcript: \"");
+    Serial.print(text);
+    Serial.println("\"");
+    Serial.printf("Latency   : %.0f ms (Upload: %.0f ms | Inference: %.0f ms)\n",
+                  stt.lastLatencyMs(), stt.lastSendMs(), stt.lastInferMs());
+    Serial.println("---------------------------------------------\n");
+  } else if (stt.lastError() != STT_OK) {
+    Serial.print("[ERROR] ");
+    Serial.print(stt.errorText());
+    Serial.printf(" (HTTP %u)\n\n", stt.lastHttpStatus());
   }
 }

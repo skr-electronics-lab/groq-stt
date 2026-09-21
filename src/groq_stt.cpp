@@ -188,6 +188,14 @@ void GroqSTT::end() {
   _state = STT_STATE_IDLE;
 }
 
+bool GroqSTT::prewarm() {
+  if (!isWifiConnected()) return false;
+  if (!httpSocketAlive()) {
+    return httpEnsureConnected();
+  }
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // non-blocking: startRecording / tick / stopRecording
 // ---------------------------------------------------------------------------

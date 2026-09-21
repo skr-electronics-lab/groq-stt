@@ -1,151 +1,217 @@
 /*
-  NonBlocking - drive the state machine from your own loop() with callbacks
+  NonBlocking - Event-driven Speech-to-Text with callbacks & background tasks
 
-  Use this pattern when your project has other things to do while the user is
-  talking (a display, a web server, a button matrix, an MQTT client...).
-  tick() does only a small bounded amount of work per call, so it's safe to
-  call at any interval - your loop never stalls.
+  Ideal for projects where your ESP32 has other tasks to perform:
+    - Driving OLED/TFT displays, NeoPixels, animations, or sensor loops
+    - Serving web pages, handling MQTT, or managing BLE connections
+    - Live audio VU level meter visualization
 
-  The default constructor sets BOOT (GPIO 0) as the push-to-talk button.
-  Press it: recording starts. Release it: recording stops and the transcript
-  arrives asynchronously in the onDone callback.
+  Key Architecture:
+    - stt.prewarm() keeps the TLS connection hot while idle for ZERO-delay starts.
+    - stt.tick() does bounded, quick processing per iteration - never blocking loop().
+    - Callbacks notify your sketch immediately when transcripts arrive or errors occur.
+    - Can be triggered by a button, touch pin, Serial command, MQTT, or timers!
 
-  Want it hands-free (no button)?
-      stt.setButtonPin(-1);    // no button
-      stt.useVad(true);        // stop ~1.2 s after you stop talking
-  See src/groq_stt_config.h for every tunable.
+  Hardware Wiring (INMP441 I2S Microphone):
+    - VDD -> 3.3V (NOT 5V)
+    - GND -> GND
+    - L/R -> GND (Left channel)
+    - SD  -> Data In  (Default: GPIO 22 on classic ESP32, GPIO 4 on ESP32-S3)
+    - SCK -> BCLK     (Default: GPIO 26 on classic ESP32, GPIO 5 on ESP32-S3)
+    - WS  -> LRCLK    (Default: GPIO 25 on classic ESP32, GPIO 6 on ESP32-S3)
 
-  Hardware: classic ESP32 (SCK=26, WS=25, SD=22, core 3.x)
-            or ESP32-S3 (SCK=5, WS=6, SD=4) + INMP441 I2S mic.
-
-  Get a free API key at console.groq.com/keys
+  Get a free Groq API key at: https://console.groq.com/keys
 */
 
-#include <Arduino.h>      // delay(), millis(), digitalRead(), Serial, String
-#include <WiFi.h>         // ESP32 Wi-Fi stack
-#include <groq_stt.h>     // the library: state machine, callbacks, mic driver
+#include <Arduino.h>
+#include <WiFi.h>
+#include <groq_stt.h>
 
-// --- Credentials: edit these three lines for your network + API key ---------
+// =============================================================================
+// 1. Wi-Fi & Groq API Credentials
+// =============================================================================
 const char* WIFI_SSID    = "YOUR_WIFI";
 const char* WIFI_PASS    = "YOUR_PASSWORD";
 const char* GROQ_API_KEY = "gsk_...";
 
-// --- BOOT button pin (GPIO 0 is the BOOT button on classic ESP32 and S3) -----
-const int BTN_PIN = 0;
+// =============================================================================
+// 2. Hardware Pin Configuration (Customizable for ANY board / pins)
+// =============================================================================
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+const int PIN_MIC_SCK = 5;
+const int PIN_MIC_WS  = 6;
+const int PIN_MIC_SD  = 4;
+#else
+const int PIN_MIC_SCK = 26;
+const int PIN_MIC_WS  = 25;
+const int PIN_MIC_SD  = 22;
+#endif
 
-// --- The library instance ----------------------------------------------------
-GroqSTT stt;
+// Trigger button pin (active LOW with internal pull-up):
+// Set to 0 for onboard BOOT, or any GPIO. Set to -1 if using software/Serial triggers!
+const int PIN_BUTTON  = 0;
 
-// --- 1. Connect to Wi-Fi ourselves (the library won't touch Wi-Fi) ---------
-// We do Wi-Fi here so the example mirrors the "library never touches your
-// network" promise. The library only verifies the link is up.
+// Initialize GroqSTT instance
+GroqSTT stt(PIN_MIC_SCK, PIN_MIC_WS, PIN_MIC_SD, PIN_BUTTON);
+
+// --- Wi-Fi Connection Helper -------------------------------------------------
 static void connectWiFi() {
-  Serial.print("[NET] connecting to ");
+  Serial.print("[NET] Connecting to ");
   Serial.println(WIFI_SSID);
 
-  WiFi.mode(WIFI_STA);                       // station mode (join an AP)
-  WiFi.begin(WIFI_SSID, WIFI_PASS);          // start connecting in background
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
 
-  while (WiFi.status() != WL_CONNECTED) {    // block until the link is up
+  while (WiFi.status() != WL_CONNECTED) {
     delay(400);
-    Serial.print(".");                       // progress dot in the Serial log
+    Serial.print(".");
   }
 
   Serial.println();
-  Serial.print("[NET] connected, IP: ");
+  Serial.print("[NET] Connected! IP: ");
   Serial.println(WiFi.localIP());
 }
 
-// --- 2. Callback: fired when a transcript lands (non-blocking) ---------------
-// This runs from inside stt.tick() the moment Groq's reply is fully parsed.
-// Keep it short - the library moves on to the IDLE state right after.
+// =============================================================================
+// 3. Non-Blocking Event Callbacks
+// =============================================================================
+
+// Fired when transcription completes successfully
 void onTranscript(const String& text) {
-  // stt.lastLatencyMs() = time from "request head sent" to "reply received".
-  // That is the network + Groq processing time, not including how long the
-  // user held the button.
-  Serial.print("Transcript: ");
-  Serial.println(text);
-  Serial.print("Time: ");
-  Serial.print((unsigned)stt.lastLatencyMs());
-  Serial.println(" ms");
+  Serial.println("\n---------------------------------------------");
+  Serial.print("[EVENT] Transcript: \"");
+  Serial.print(text);
+  Serial.println("\"");
+  Serial.printf("[EVENT] Latency   : %.0f ms (Upload: %.0f ms | Inference: %.0f ms)\n",
+                stt.lastLatencyMs(), stt.lastSendMs(), stt.lastInferMs());
+  Serial.println("---------------------------------------------\n");
 }
 
-// --- 3. Callback: fired on any error (network drop, short recording, etc.) ---
+// Fired if an error occurs (network drop, silence, rate limit, etc.)
 void onError(groq_stt_err_t err, const String& detail) {
-  // groq_stt_errorText(err) returns a human-readable reason like
-  // "TLS failed", "recording too short", "HTTP 401 Unauthorized", etc.
-  // detail adds context if the library has any.
-  Serial.print("Error: ");
-  Serial.print(groq_stt_errorText(err));
-  if (detail.length()) {                     // include the extra detail if any
-    Serial.print(" - ");
-    Serial.print(detail);
-  }
   Serial.println();
-  Serial.print("HTTP status: ");
-  Serial.println(stt.lastHttpStatus());
+  Serial.print("[EVENT ERROR] ");
+  Serial.print(groq_stt_errorText(err));
+  Serial.print(": ");
+  Serial.print(detail);
+  Serial.printf(" (HTTP %u)\n\n", stt.lastHttpStatus());
+}
+
+// Fired on every audio block with current RMS amplitude (0.0 to 1.0)
+// Use this to drive OLED VU meters, RGB LEDs, or volume indicators!
+void onAudioLevel(float rms01) {
+  static uint32_t lastMeter = 0;
+  if (millis() - lastMeter > 100) {
+    lastMeter = millis();
+    int bars = (int)(rms01 * 30.0f);
+    if (bars > 20) bars = 20;
+
+    Serial.print("\r[Mic Level] [");
+    for (int i = 0; i < 20; i++) Serial.print(i < bars ? "#" : " ");
+    Serial.print("]");
+  }
 }
 
 void setup() {
   Serial.begin(115200);
   delay(500);
 
-  Serial.println("GroqSTT - NonBlocking");
-  Serial.print("Model: ");
-  Serial.println(GROQ_STT_MODEL);
+  Serial.println("\n=============================================");
+  Serial.println("          GroqSTT - NonBlocking              ");
+  Serial.println("=============================================");
 
   connectWiFi();
 
-  // Register the callbacks BEFORE stt.begin() so the library can fire them
-  // any time after begin() returns. Callbacks are optional - you can also
-  // just poll stt.isDone() and read stt.getResult() from your loop.
+  // Register our callbacks
   stt.onDone(onTranscript);
   stt.onError(onError);
+  stt.onLevel(onAudioLevel);
 
-  // The library init: Wi-Fi is already up, so it just validates the key and
-  // prepares the I2S microphone driver. No background work starts here.
+  // ===========================================================================
+  // 4. Complete Library Configuration & Tuning
+  // ===========================================================================
+
+  // --- Model Selection ---
+  // Options: "whisper-large-v3-turbo" (Fastest, default),
+  //          "whisper-large-v3" (Maximum accuracy for accents),
+  //          "distil-whisper-large-v3-en" (English only)
+  stt.setModel("whisper-large-v3-turbo");
+
+  // Language: ISO-639-1 code ("en", "es", "de", "hi", etc.) or "" for auto-detect
+  stt.setLanguage("en");
+
+  // Audio gain (1 - 16, default 8) and high-pass filter (default 120 Hz)
+  stt.setGain(8);
+  stt.setHighpassHz(120);
+
+  // Minimum peak threshold to prevent hallucinations on silence (default 300)
+  stt.setSilenceThreshold(300);
+
+  // Initialize library
   if (!stt.begin(GROQ_API_KEY)) {
-    Serial.print("[INIT] failed: ");
+    Serial.print("[INIT FAIL] ");
     Serial.println(stt.errorText());
     while (true) delay(1000);
   }
 
-  Serial.println("[INIT] ready - press BOOT to talk");
+  Serial.println("[INIT OK] Ready!");
+  Serial.println(">> Triggers: Press BOOT button OR type 'r' in Serial to record <<\n");
 }
 
 void loop() {
-  // -----------------------------------------------------------------------
-  // YOUR PROJECT'S WORK GOES HERE.
-  // Anything that doesn't block longer than a few ms is fine - the library
-  // only runs while you call stt.tick() at the bottom of the loop.
-  // -----------------------------------------------------------------------
-  static uint32_t lastBeat = 0;
-  if (millis() - lastBeat > 1000) {          // 1 Hz heartbeat so the user
-    lastBeat = millis();                     // can see the loop is alive
-    Serial.print(".");
+  // ---------------------------------------------------------------------------
+  // 1. Keep TLS Connection Pre-Warmed While Idle
+  // Pre-warms the TLS socket to api.groq.com so triggers start INSTANTLY!
+  // ---------------------------------------------------------------------------
+  static uint32_t lastPrewarm = 0;
+  if (!stt.isBusy() && millis() - lastPrewarm > 2000) {
+    lastPrewarm = millis();
+    stt.prewarm(); // maintains hot TLS socket in background
   }
 
-  // Only start a new recording when the library is idle (not already
-  // recording or waiting for a reply). isBusy() is true from
-  // startRecording() until the transcript (or error) has been delivered.
-  if (!stt.isBusy() && digitalRead(BTN_PIN) == LOW) {
-    delay(30);                               // simple debounce
-    if (digitalRead(BTN_PIN) == LOW) {
-      stt.startRecording();                  // also consumes a previous DONE state
-      Serial.println();
-      Serial.println("[REC] recording... release to transcribe");
+  // ---------------------------------------------------------------------------
+  // 2. Hardware Button Trigger (Push & Hold, release to stop)
+  // ---------------------------------------------------------------------------
+  if (PIN_BUTTON >= 0 && !stt.isBusy() && digitalRead(PIN_BUTTON) == LOW) {
+    delay(30); // debounce
+    if (digitalRead(PIN_BUTTON) == LOW) {
+      stt.startRecording();
+      Serial.println("\n[REC] Recording started (via button)... release to transcribe!");
     }
   }
 
-  // tick() drives the state machine forward by one step:
-  //   IDLE      -> does nothing, returns false (we can stop calling tick)
-  //   RECORDING -> reads a chunk of mic audio, streams it to Groq
-  //   FINISHING -> sends the terminating chunk
-  //   READING   -> pulls a few bytes of the Groq reply, parses them
-  //   DONE      -> fires onDone(), returns false
-  //   ERROR     -> fires onError(), returns false
-  // It is non-blocking: each call is bounded and quick, so your loop stays
-  // responsive to other work.
+  // ---------------------------------------------------------------------------
+  // 3. Software Trigger Example (e.g. Serial command, MQTT, touch pin, etc.)
+  // Type 'r' in Serial to toggle recording on/off!
+  // ---------------------------------------------------------------------------
+  if (Serial.available()) {
+    char c = Serial.read();
+    if (c == 'r' || c == 'R') {
+      if (!stt.isRecording() && !stt.isBusy()) {
+        stt.startRecording();
+        Serial.println("\n[REC] Recording started (via Serial command)... Type 'r' again to stop!");
+      } else if (stt.isRecording()) {
+        stt.stopRecording();
+        Serial.println("\n[REC] Stopping recording and uploading...");
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 4. Drive the State Machine
+  // tick() advances recording, chunk streaming, and reply parsing.
+  // Never blocks your loop!
+  // ---------------------------------------------------------------------------
   stt.tick();
+
+  // ---------------------------------------------------------------------------
+  // 5. Your Other Project Tasks Go Here! (Displays, NeoPixels, sensors, etc.)
+  // ---------------------------------------------------------------------------
+  static uint32_t heartbeat = 0;
+  if (!stt.isRecording() && millis() - heartbeat > 2000) {
+    heartbeat = millis();
+    // Your background tasks run seamlessly here
+  }
+
   delay(1);
 }

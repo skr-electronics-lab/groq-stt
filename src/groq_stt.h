@@ -40,6 +40,7 @@ public:
   bool begin(const char* apiKey);                    // Wi-Fi managed by user
   bool begin(const char* ssid, const char* pass, const char* apiKey);
   void end();
+  bool prewarm();                                    // pre-connect TLS while idle for instant response
 
   // ---- blocking convenience -----------------------------------------
   String listen();               // button-held; buttonless: VAD silence gap or safety cap

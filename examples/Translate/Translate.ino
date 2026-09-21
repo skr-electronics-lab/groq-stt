@@ -1,43 +1,55 @@
 /*
-  Translate - non-English speech -> English text via Groq /audio/translations
+  Translate - Speak in ANY language -> Get translated English text + timestamps
 
-  This example shows three library features together:
-    1. setTranslate(true)        - routes to /audio/translations; the library
-                                    auto-switches the model to whisper-large-v3
-                                    (the only model Groq allows for translate)
-    2. setResponseFormat(VERBOSE) - asks Groq for a JSON reply with per-segment
-                                    start/end timestamps (finest granularity
-                                    Groq exposes; no word-level timestamps)
-    3. setTemperature(0.8)        - whisper's "determinism" dial. 0 = greedy
-                                    (default), higher = more varied output
+  Demonstrates real-time speech translation powered by Groq Whisper:
+    - Automatically detects spoken language (Spanish, French, Hindi, Japanese, etc.)
+    - Translates spoken words directly into English on Groq Cloud
+    - Requests verbose JSON output with per-segment start/end timestamps
+    - Parses JSON output using ArduinoJson
 
-  Press BOOT, speak any language, release. The English translation plus the
-  segment timestamps print to Serial.
+  Hardware Wiring (INMP441 I2S Microphone):
+    - VDD -> 3.3V (NOT 5V)
+    - GND -> GND
+    - L/R -> GND (Left channel)
+    - SD  -> Data In  (Default: GPIO 22 on classic ESP32, GPIO 4 on ESP32-S3)
+    - SCK -> BCLK     (Default: GPIO 26 on classic ESP32, GPIO 5 on ESP32-S3)
+    - WS  -> LRCLK    (Default: GPIO 25 on classic ESP32, GPIO 6 on ESP32-S3)
 
-  This example uses ArduinoJson (the only external dep in any example) to
-  parse the verbose JSON reply.
-
-  Hardware: classic ESP32 (SCK=26, WS=25, SD=22, core 3.x)
-            or ESP32-S3 (SCK=5, WS=6, SD=4) + INMP441 I2S mic.
-  Get a free API key at console.groq.com/keys
+  Get a free Groq API key at: https://console.groq.com/keys
 */
 
-#include <Arduino.h>          // Serial, delay(), millis(), String
-#include <WiFi.h>             // ESP32 Wi-Fi stack
-#include <groq_stt.h>         // the library
-#include <ArduinoJson.h>      // tiny JSON parser, only for verbose JSON replies
+#include <Arduino.h>
+#include <WiFi.h>
+#include <groq_stt.h>
+#include <ArduinoJson.h>
 
-// --- Credentials -------------------------------------------------------------
+// =============================================================================
+// 1. Wi-Fi & Groq API Credentials
+// =============================================================================
 const char* WIFI_SSID    = "YOUR_WIFI";
 const char* WIFI_PASS    = "YOUR_PASSWORD";
 const char* GROQ_API_KEY = "gsk_...";
 
-// --- The library instance ----------------------------------------------------
-GroqSTT stt;
+// =============================================================================
+// 2. Hardware Pin Configuration (Change for your board / wiring)
+// =============================================================================
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+const int PIN_MIC_SCK = 5;
+const int PIN_MIC_WS  = 6;
+const int PIN_MIC_SD  = 4;
+#else
+const int PIN_MIC_SCK = 26;
+const int PIN_MIC_WS  = 25;
+const int PIN_MIC_SD  = 22;
+#endif
 
-// --- Connect to Wi-Fi ourselves --------------------------------------------
+const int PIN_BUTTON  = 0; // Onboard BOOT button, or any GPIO connected to GND
+
+GroqSTT stt(PIN_MIC_SCK, PIN_MIC_WS, PIN_MIC_SD, PIN_BUTTON);
+
+// --- Wi-Fi Connection Helper -------------------------------------------------
 static void connectWiFi() {
-  Serial.print("[NET] connecting to ");
+  Serial.print("[NET] Connecting to ");
   Serial.println(WIFI_SSID);
 
   WiFi.mode(WIFI_STA);
@@ -48,97 +60,91 @@ static void connectWiFi() {
   }
 
   Serial.println();
-  Serial.print("[NET] connected, IP: ");
+  Serial.print("[NET] Connected! IP: ");
   Serial.println(WiFi.localIP());
 }
 
-// --- Parse the verbose-JSON reply and print it nicely -----------------------
-// stt.listen() returns the raw response body. With STT_FMT_VERBOSE_JSON that
-// body is a JSON object containing: task, language, text, and a segments[].
-// We deserialize it with ArduinoJson and print the parts we care about.
-static void printReply(const String& body) {
-  // ArduinoJson's JsonDocument is a RAM arena; 2 KB is plenty for Groq's
-  // typical translation reply.
+// --- Parse and display verbose JSON with timestamps -------------------------
+static void printTranslation(const String& jsonBody) {
   JsonDocument doc;
-  DeserializationError err = deserializeJson(doc, body);
-  if (err) {                                // malformed JSON (shouldn't happen)
-    Serial.print("JSON parse error: ");
+  DeserializationError err = deserializeJson(doc, jsonBody);
+  if (err) {
+    Serial.print("[JSON ERROR] Failed to parse: ");
     Serial.println(err.c_str());
     return;
   }
 
-  // "task"      is "translate" (we set translate=true) or "transcribe"
-  // "language"  is the language the model detected in the source audio
-  // "text"      is the full English translation
-  Serial.print("Task: ");
-  Serial.println(doc["task"] | "");         // the "| "" " fallback returns "" if missing
-  Serial.print("Language: ");
-  Serial.println(doc["language"] | "");
+  const char* detectedLang = doc["language"] | "unknown";
+  const char* englishText  = doc["text"] | "";
 
-  Serial.print("Transcript: ");
-  Serial.print(doc["text"] | "");           // the translated English
-  Serial.println();
+  Serial.println("\n=============================================");
+  Serial.printf("Detected Language : %s\n", detectedLang);
+  Serial.printf("English Transcript: \"%s\"\n", englishText);
+  Serial.println("---------------------------------------------");
+  Serial.println("Segment Timestamps:");
 
-  // Segments with start/end in seconds. Iterate the array with a range-for
-  // and print each one on its own line.
-  Serial.println("Segments:");
   for (JsonVariantConst s : doc["segments"].as<JsonArrayConst>()) {
-    Serial.print("  [");
-    Serial.print(s["start"] | 0.0f, 2);      // 2 decimal places = 10 ms resolution
-    Serial.print(" -> ");
-    Serial.print(s["end"]   | 0.0f, 2);
-    Serial.print("]  ");
-    Serial.println(s["text"] | "");
+    float startSec = s["start"] | 0.0f;
+    float endSec   = s["end"]   | 0.0f;
+    const char* txt = s["text"]  | "";
+    Serial.printf("  [%5.2fs -> %5.2fs] %s\n", startSec, endSec, txt);
   }
+  Serial.println("=============================================\n");
 }
 
 void setup() {
   Serial.begin(115200);
   delay(500);
 
-  Serial.println("GroqSTT - Translate");
-  Serial.print("Model: ");
-  Serial.print(GROQ_STT_TRANSLATE_MODEL);    // whisper-large-v3 (the only one that translates)
-  Serial.print("   endpoint: ");
-  Serial.println(GROQ_STT_PATH_TRANSLATE);   // /openai/v1/audio/translations
+  Serial.println("\n=============================================");
+  Serial.println("            GroqSTT - Translate              ");
+  Serial.println("=============================================");
 
   connectWiFi();
 
-  // Configure the library for translation with verbose JSON timestamps.
-  // These calls go BEFORE stt.begin() so the first request already uses them.
-  stt.setTranslate(true);                   // use /audio/translations
-  stt.setLanguage("");                      // "" = auto-detect the spoken language
-  stt.setTemperature(0.8f);                 // small amount of variation
-  stt.setResponseFormat(STT_FMT_VERBOSE_JSON);  // ask for per-segment timestamps
-  // stt.setPrompt("This is a technical demo."); // optional spelling/terminology hints
+  // ===========================================================================
+  // 3. Complete Library Configuration & Tuning
+  // ===========================================================================
+
+  // --- Translation Mode ---
+  // Enabling translation routes requests to Groq's /audio/translations endpoint.
+  // Note: Groq uses "whisper-large-v3" for translation (automatically set).
+  stt.setTranslate(true);
+
+  // Spoken Language: "" means auto-detect whatever language you speak!
+  stt.setLanguage("");
+
+  // Response Format: Ask for verbose JSON to get per-segment timestamps
+  stt.setResponseFormat(STT_FMT_VERBOSE_JSON);
+
+  // Audio Tuning: Gain (default 8) and Highpass filter (default 120 Hz)
+  stt.setGain(8);
+  stt.setHighpassHz(120);
+  stt.setSilenceThreshold(300);
+
+  // Temperature: 0.0 = greedy deterministic, up to 1.0
+  stt.setTemperature(0.2f);
 
   if (!stt.begin(GROQ_API_KEY)) {
-    Serial.print("[INIT] failed: ");
+    Serial.print("[INIT FAIL] ");
     Serial.println(stt.errorText());
     while (true) delay(1000);
   }
 
-  Serial.println("[INIT] ready - hold BOOT, speak any language, release");
+  Serial.println("[INIT OK] Ready!");
+  Serial.println(">> Hold BOOT, speak in ANY language (Spanish, Hindi, French...), release <<\n");
 }
 
 void loop() {
-  // Time the whole round-trip so the user can see the latency.
-  uint32_t start = millis();
-  String body = stt.listen();               // record + upload + reply
-  uint32_t total = millis() - start;
+  String response = stt.listen();
 
-  // On error, stt.listen() returns "" and sets stt.lastError().
-  if (stt.lastError() != STT_OK) {
-    Serial.print("Error: ");
-    Serial.println(stt.errorText());
-    Serial.print("HTTP status: ");
-    Serial.println(stt.lastHttpStatus());
-  } else {
-    // body is the verbose-JSON reply. Parse and print it.
-    printReply(body);
-    Serial.print("Time: ");
-    Serial.print(total);
-    Serial.println(" ms");
+  if (response.length() > 0) {
+    printTranslation(response);
+    Serial.printf("Latency: %.0f ms (Upload: %.0f ms | Inference: %.0f ms)\n\n",
+                  stt.lastLatencyMs(), stt.lastSendMs(), stt.lastInferMs());
+  } else if (stt.lastError() != STT_OK) {
+    Serial.print("[ERROR] ");
+    Serial.print(stt.errorText());
+    Serial.printf(" (HTTP %u)\n\n", stt.lastHttpStatus());
   }
-  delay(1500);                              // small pause so the user can read
 }
