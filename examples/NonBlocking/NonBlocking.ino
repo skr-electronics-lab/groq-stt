@@ -128,24 +128,39 @@ void setup() {
   stt.onLevel(onAudioLevel);
 
   // ===========================================================================
-  // 4. Complete Library Configuration & Tuning
+  // 4. Configuration & Audio Tuning
   // ===========================================================================
 
-  // --- Model Selection ---
-  // Options: "whisper-large-v3-turbo" (Fastest, default),
-  //          "whisper-large-v3" (Maximum accuracy for accents),
-  //          "distil-whisper-large-v3-en" (English only)
+  // --- A. Model Selection ---
+  // "whisper-large-v3-turbo" : Fast sub-second response (~200-400ms), multilingual (Default).
+  // "whisper-large-v3"       : Maximum accuracy for heavy accents & translation.
   stt.setModel("whisper-large-v3-turbo");
 
-  // Language: ISO-639-1 code ("en", "es", "de", "hi", etc.) or "" for auto-detect
+  // --- B. Language ---
+  // ISO code ("en", "es", "hi", etc.) or "" for auto-detection.
   stt.setLanguage("en");
 
-  // Audio gain (1 - 16, default 8) and high-pass filter (default 120 Hz)
+  // --- C. Audio Tuning ---
+  // Digital Gain: 1 to 16 (default 8). Boosts volume after filtering.
   stt.setGain(8);
+
+  // High-Pass Filter: Cuts frequencies below 120 Hz (default 120 Hz).
+  // Strips DC offset and desk/fan vibrations from the INMP441, freeing up digital
+  // headroom so your voice can be amplified cleanly without distortion.
   stt.setHighpassHz(120);
 
-  // Minimum peak threshold to prevent hallucinations on silence (default 300)
+  // Silence Threshold: Minimum volume peak (0-32767) needed to upload (default 300).
   stt.setSilenceThreshold(300);
+
+  // --- D. Context Prompt (Optional) ---
+  // Biases Whisper toward specific terms, short commands, or Hinglish:
+  // stt.setPrompt("ESP32, Groq, INMP441, Neopixel, turn on, red");
+
+  // --- E. Hands-free VAD Tuning (No Button) ---
+  // stt.setButtonPin(-1);        // Disable button for hands-free
+  // stt.useVad(true);            // Auto-stop when you stop talking
+  // stt.setVadSilenceMs(1200);   // Trailing silence pause before upload (ms)
+  // stt.setVadSpeechRatio(2.0f); // Voice sensitivity (1.5 = quiet room, 2.5+ = noisy)
 
   // Initialize library
   if (!stt.begin(GROQ_API_KEY)) {

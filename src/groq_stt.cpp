@@ -44,6 +44,8 @@ GroqSTT::GroqSTT()
   _maxSeconds = 0; // no cap by default; recording ends on button release / VAD / fixed ms
   _vad = false;
   _vadTailMs = GROQ_STT_VAD_TAIL_MS;
+  _vadSpeechRatio = GROQ_STT_VAD_SPEECH_RATIO;
+  _vadNoiseRatio = GROQ_STT_VAD_NOISE_RATIO;
   _vadNoise = 0;
   _vadSpeech = false;
   _vadQuietMs = 0;
@@ -386,8 +388,8 @@ void GroqSTT::trackVad(float rms) {
   if (rms < _vadNoise) _vadNoise += (rms - _vadNoise) * 0.05f;
   else                 _vadNoise += (rms - _vadNoise) * 0.002f;
 
-  bool above = rms >= _vadNoise * GROQ_STT_VAD_SPEECH_RATIO;
-  bool below = rms <= _vadNoise * GROQ_STT_VAD_NOISE_RATIO;
+  bool above = rms >= _vadNoise * _vadSpeechRatio;
+  bool below = rms <= _vadNoise * _vadNoiseRatio;
   float chunkMs = (float)GROQ_STT_CHUNK_SAMPLES * 1000.0f / (float)GROQ_STT_SAMPLE_RATE;
   if (above) {
     _vadSpeech = true;

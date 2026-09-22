@@ -52,7 +52,7 @@ const int PIN_MIC_SD  = 22;
 // Set to -1 if your project has NO button (and use hands-free VAD below).
 const int PIN_BUTTON  = 0;
 
-// Initialize GroqSTT with our explicit pins (never hardcoded to any single board)
+// Initialize GroqSTT with microphone and button pins
 GroqSTT stt(PIN_MIC_SCK, PIN_MIC_WS, PIN_MIC_SD, PIN_BUTTON);
 
 // --- Wi-Fi Connection Helper -------------------------------------------------
@@ -84,51 +84,39 @@ void setup() {
   connectWiFi();
 
   // ===========================================================================
-  // 3. Complete Library Configuration & Tuning (All settings exposed!)
+  // 3. Configuration & Audio Tuning
   // ===========================================================================
 
   // --- A. Model Selection ---
-  // Groq offers 3 official Whisper models:
-  //   1. "whisper-large-v3-turbo" (Default & Recommended):
-  //      - Ultra-fast sub-second latency (~200 - 400 ms inference)
-  //      - Multilingual support for 99 languages
-  //      - Best balance of speed, accuracy, and lowest cost ($0.04/hr)
-  //   2. "whisper-large-v3":
-  //      - Full Large v3 model (~700 - 1200 ms inference)
-  //      - Top accuracy for heavy accents, technical vocabulary, or noisy audio
-  //   3. "distil-whisper-large-v3-en":
-  //      - Distilled, lightweight model for English-only applications ($0.02/hr)
+  // "whisper-large-v3-turbo" : Fast sub-second response (~200-400ms), multilingual (Default).
+  // "whisper-large-v3"       : Maximum accuracy for heavy accents & translation.
   stt.setModel("whisper-large-v3-turbo");
 
   // --- B. Language ---
-  // Set explicit ISO-639-1 code (e.g., "en", "es", "fr", "de", "hi", "zh", "ja").
-  // Set to "" (empty string) to enable Whisper's automatic language detection!
+  // ISO code ("en", "es", "hi", etc.) or "" for auto-detection.
   stt.setLanguage("en");
 
-  // --- C. Audio & DSP Tuning ---
-  // Digital Gain: Multiplier applied after filtering (default: 8, range: 1 to 16).
-  //   - Increase (e.g. 10-12) if speaking from a distance or mic is quiet.
-  //   - Decrease (e.g. 4-6) if speaking very close or in loud environments.
+  // --- C. Audio Tuning ---
+  // Digital Gain: 1 to 16 (default 8). Boosts volume after filtering.
   stt.setGain(8);
 
-  // High-Pass Filter: Corner frequency in Hz (default: 120 Hz).
-  //   - Strips sub-audible DC offset and mechanical desk rumble from INMP441,
-  //     freeing up 26x of digital headroom for crystal-clear vocal capture.
+  // High-Pass Filter: Cuts frequencies below 120 Hz (default 120 Hz).
+  // Strips DC offset and desk/fan vibrations from the INMP441, freeing up digital
+  // headroom so your voice can be amplified cleanly without distortion.
   stt.setHighpassHz(120);
 
-  // Silence Threshold: Minimum audio peak (0 - 32767) required to upload (default: 300).
-  //   - Prevents Whisper from hallucinating phantom words when no one is speaking.
+  // Silence Threshold: Minimum volume peak (0-32767) needed to upload (default 300).
   stt.setSilenceThreshold(300);
 
   // --- D. Context Prompt (Optional) ---
-  // Pass keywords or specialized acronyms to help Whisper spell them properly:
-  // stt.setPrompt("ESP32, GroqSTT, Arduino, IoT, Neopixel");
+  // Biases Whisper toward specific terms, short commands, or Hinglish:
+  // stt.setPrompt("ESP32, Groq, INMP441, Neopixel, turn on, red");
 
-  // --- E. Hands-free VAD (Voice Activity Detection) ---
-  // Want hands-free recording with NO buttons?
-  // Uncomment the two lines below:
-  // stt.setButtonPin(-1); // disable button
-  // stt.useVad(true);     // auto-stop recording ~1.2s after you stop speaking
+  // --- E. Hands-free VAD Tuning (No Button) ---
+  // stt.setButtonPin(-1);        // Disable button for hands-free
+  // stt.useVad(true);            // Auto-stop when you stop talking
+  // stt.setVadSilenceMs(1200);   // Trailing silence pause before upload (ms)
+  // stt.setVadSpeechRatio(2.0f); // Voice sensitivity (1.5 = quiet room, 2.5+ = noisy)
 
   // Initialize GroqSTT with API key
   if (!stt.begin(GROQ_API_KEY)) {

@@ -111,22 +111,25 @@ void setup() {
   connectWiFi();
 
   // ===========================================================================
-  // 2. Complete Library Configuration & Tuning
+  // 2. Configuration & Tuning
   // ===========================================================================
 
-  // Model: "whisper-large-v3-turbo" (Fastest, default),
-  //        "whisper-large-v3" (Best for complex domain audio),
-  //        "distil-whisper-large-v3-en" (English only)
+  // --- A. Model Selection ---
+  // "whisper-large-v3-turbo" : Fast sub-second response (~200-400ms), multilingual (Default).
+  // "whisper-large-v3"       : Maximum accuracy for heavy accents & translation.
   stt.setModel("whisper-large-v3-turbo");
 
-  // Language: Set explicit ISO code ("en", "es", "fr", etc.) or "" for auto-detection
+  // --- B. Language ---
+  // ISO code ("en", "es", "hi", etc.) or "" for auto-detection.
   stt.setLanguage("en");
 
-  // Response Format: STT_FMT_TEXT (default), STT_FMT_JSON, or STT_FMT_VERBOSE_JSON
+  // --- C. Response Format ---
+  // STT_FMT_TEXT (default plain string), STT_FMT_JSON, or STT_FMT_VERBOSE_JSON (with timestamps).
   stt.setResponseFormat(STT_FMT_TEXT);
 
-  // Optional spelling prompt:
-  // stt.setPrompt("ESP32, GroqSTT, Arduino");
+  // --- D. Context Prompt (Optional) ---
+  // Biases Whisper toward specific terms, acronyms, or Hinglish:
+  // stt.setPrompt("ESP32, Groq, INMP441, Neopixel");
 
   if (!stt.begin(GROQ_API_KEY)) {
     Serial.print("[INIT FAIL] ");

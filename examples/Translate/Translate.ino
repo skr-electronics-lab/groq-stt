@@ -103,27 +103,37 @@ void setup() {
   connectWiFi();
 
   // ===========================================================================
-  // 3. Complete Library Configuration & Tuning
+  // 3. Library Configuration & Tuning
   // ===========================================================================
 
   // --- Translation Mode ---
-  // Enabling translation routes requests to Groq's /audio/translations endpoint.
-  // Note: Groq uses "whisper-large-v3" for translation (automatically set).
+  // Routes to Groq's /audio/translations endpoint (auto-selects whisper-large-v3).
   stt.setTranslate(true);
 
   // Spoken Language: "" means auto-detect whatever language you speak!
   stt.setLanguage("");
 
-  // Response Format: Ask for verbose JSON to get per-segment timestamps
+  // Response Format: STT_FMT_VERBOSE_JSON provides segment timestamps.
   stt.setResponseFormat(STT_FMT_VERBOSE_JSON);
 
-  // Audio Tuning: Gain (default 8) and Highpass filter (default 120 Hz)
+  // Audio Tuning:
+  // Cuts frequencies below 120 Hz to strip DC offset and desk/fan rumble,
+  // freeing headroom so digital gain (8) amplifies your voice cleanly.
   stt.setGain(8);
   stt.setHighpassHz(120);
   stt.setSilenceThreshold(300);
 
-  // Temperature: 0.0 = greedy deterministic, up to 1.0
+  // Temperature: 0.0 (strict) to 1.0 (creative). 0.2 gives consistent translations.
   stt.setTemperature(0.2f);
+
+  // Context Prompt (Optional): Biases translation toward specific technical terms:
+  // stt.setPrompt("ESP32, microcontroller, robotics, IoT");
+
+  // Hands-free VAD Tuning (Optional - when PIN_BUTTON = -1):
+  // stt.setButtonPin(-1);        // Disable button for hands-free
+  // stt.useVad(true);            // Auto-stop when you stop talking
+  // stt.setVadSilenceMs(1200);   // Trailing silence pause before upload (ms)
+  // stt.setVadSpeechRatio(2.0f); // Voice sensitivity (1.5 = quiet room, 2.5+ = noisy)
 
   if (!stt.begin(GROQ_API_KEY)) {
     Serial.print("[INIT FAIL] ");

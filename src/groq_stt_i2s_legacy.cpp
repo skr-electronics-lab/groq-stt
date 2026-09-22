@@ -1,12 +1,12 @@
 // Backend B: legacy driver/i2s.h. Compiled ONLY on core 2.x (<3). On core 3.x
 // the legacy driver conflicts with the new ESP_I2S driver at runtime (boot-time
 // abort), so core 3 builds ship stubs and always use the ESP_I2S backend.
+#include <Arduino.h> // defines ESP_ARDUINO_VERSION_MAJOR on every core
 #include "groq_stt_i2s_priv.h"
 #include "groq_stt_config.h"
 
 #if ESP_ARDUINO_VERSION_MAJOR < 3
 
-#include <Arduino.h>
 #include <driver/i2s.h>
 
 static const int s_legacyPort = 0; // I2S_NUM_0

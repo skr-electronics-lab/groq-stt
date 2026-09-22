@@ -100,7 +100,7 @@
 #define GROQ_STT_TEMPERATURE 0.0f
 #endif
 #ifndef GROQ_STT_AGENT
-#define GROQ_STT_AGENT "groq_stt/1.0.2" // Groq rejects requests without User-Agent
+#define GROQ_STT_AGENT "groq_stt/1.0.3" // Groq rejects requests without User-Agent
 #endif
 
 // ---- network timeouts (ms) ----

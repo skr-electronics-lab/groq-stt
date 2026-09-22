@@ -113,6 +113,7 @@ void stt.end();
 ```cpp
 String stt.listen();                            // block while BOOT held, return on release
 String stt.listen(uint32_t ms);                 // fixed-duration recording
+bool   stt.prewarm();                           // pre-connect TLS in background for instant response
 bool   stt.startRecording();                    // non-blocking start
 void   stt.stopRecording();                     // force-stop mid-record
 bool   stt.tick();                              // pump the state machine (safe at any cadence)
@@ -153,7 +154,8 @@ stt.setMaxSeconds(0);                           // 0 = no cap
 stt.setPins(sck, ws, sd);
 stt.setButtonPin(0);                            // -1 = no button
 stt.useVad(true);
-stt.setVadSilenceMs(1200);
+stt.setVadSilenceMs(1200);                      // trailing silence gap (ms)
+stt.setVadSpeechRatio(2.0f);                    // sensitivity: 1.5 quiet, 2.5+ noisy room
 stt.useLegacyI2S(false);                        // auto-detected; force only if you know why
 ```
 

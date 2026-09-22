@@ -85,11 +85,17 @@ public:
   void setMaxSeconds(float s) { _maxSeconds = s; }            // 0 = no cap
 
   // ---- recording behaviour --------------------------------------------
-  // Voice activity detection: auto-stops a recording after the signal stays
-  // below the tracked noise floor for VAD_TAIL_MS. Handy when no button is
-  // wired; the default button-driven flow does not need it.
+  // Voice activity detection: auto-stops a recording after speech is finished
+  // and silence stays below the tracked noise floor for VAD_TAIL_MS.
   void useVad(bool on) { _vad = on; }
   void setVadSilenceMs(uint32_t ms) { _vadTailMs = ms ? ms : GROQ_STT_VAD_TAIL_MS; }
+  void setVadSpeechRatio(float ratio) { _vadSpeechRatio = (ratio > 1.0f) ? ratio : GROQ_STT_VAD_SPEECH_RATIO; }
+  void setVadNoiseRatio(float ratio)  { _vadNoiseRatio  = (ratio > 1.0f) ? ratio : GROQ_STT_VAD_NOISE_RATIO; }
+  void setVadParams(uint32_t silenceTailMs, float speechRatio = 2.0f, float noiseRatio = 1.5f) {
+    setVadSilenceMs(silenceTailMs);
+    setVadSpeechRatio(speechRatio);
+    setVadNoiseRatio(noiseRatio);
+  }
 
   // ---- plumbing / diagnostics ------------------------------------------
   void useLegacyI2S(bool legacy) { _forceLegacy = legacy; }
@@ -188,6 +194,8 @@ private:
   float _vadNoise;        // adaptive ambient noise floor (RMS of one chunk)
   bool _vadSpeech;        // currently in a speech segment
   uint32_t _vadQuietMs;   // ms of trailing silence since last speech energy
+  float _vadSpeechRatio;  // multiplier above noise floor to count as speech
+  float _vadNoiseRatio;   // multiplier below which audio counts as silence
 
   // DSP filter state
   float _hpY1, _hpX1, _hpY2, _hpX2, _hpCoef;

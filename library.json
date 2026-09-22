@@ -1,6 +1,6 @@
 {
   "name": "groq_stt",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Speech-to-text for ESP32/ESP32-S3 using Groq's ultra-fast Whisper API. Streaming voice recognition with INMP441 I2S microphones: records and uploads simultaneously (no PSRAM or audio buffering needed), built-in audio filtering, silence detection, opt-in voice-activity detection for hands-free auto-stop, blocking and non-blocking APIs, file transcription, translation, verbose JSON output with segment timestamps, and temperature control. Works with Arduino IDE and PlatformIO.",
   "keywords": ["groq", "whisper", "speech-to-text", "voice", "STT", "ESP32", "ESP32-S3", "INMP441", "i2s"],
   "authors": [
